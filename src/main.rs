@@ -1,14 +1,16 @@
-use instance_pipe::{Client, Server};
+use instance_pipe::{Client, Server, Event};
+use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::env;
 use std::io::{self, Read};
-use sha2::{Sha256, Digest};
+use std::env;
+use std::thread;
+use std::time::Duration;
 
 // サーバーとクライアント間で送受信するメッセージ構造体。
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum Message {
-    Data(Vec<u8>),
-    Hash(String),
+    Key(String),
+    Response(String),
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -30,57 +32,120 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 // サーバーモードを実行します。
 fn run_server() -> Result<(), Box<dyn Error>> {
-    let mut server = Server::new("hash_pipe")?;
+    let mut server = Server::start("key_pipe")?;
     println!("Server started, waiting for connections...");
 
-    let client = server.accept()?;
-    println!("Client connected");
-
-    // クライアントからデータを受信
-    let received_msg: Message = client.recv()?;
-    if let Message::Data(data) = received_msg {
-        println!("Server received data ({} bytes).", data.len());
-
-        // データのハッシュ値を計算
-        let mut hasher = Sha256::new();
-        hasher.update(&data);
-        let hash = format!("{:x}", hasher.finalize());
-        println!("Calculated hash: {}", hash);
-
-        // ハッシュ値をクライアントに送信
-        let response = Message::Hash(hash);
-        client.send(&response)?;
-        println!("Server sent hash.");
-    } else {
-        return Err("Unexpected message type received by server.".into());
+    loop {
+        match server.poll_event() {
+            Ok(Some(Event::ConnectionAccepted(client))) => {
+                println!("Client connected");
+                // クライアントハンドリングを別スレッドで実行
+                let client_clone = client.clone();
+                thread::spawn(move || handle_client(client_clone).unwrap_or_else(|e| eprintln!("Client handler error: {}", e)));
+            }
+            Ok(Some(Event::MessageSent)) => {
+                println!("Server sent a message (unexpected)");
+            }
+            Ok(Some(Event::MessageReceived(_))) => {
+                println!("Server received a message (unexpected)");
+            }
+            Ok(None) => {
+                // イベントなし、ループ継続
+            }
+            Err(e) => {
+                eprintln!("Server error: {}", e);
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
     }
 
+    server.stop()?;
+    println!("Server stopped");
+    Ok(())
+}
+
+// クライアントをハンドリングします。
+fn handle_client(mut client: Client) -> Result<(), Box<dyn Error + Send + Sync>> {
+    loop {
+        match client.poll_event::<Message>() {
+            Ok(Some(Event::MessageReceived(Message::Key(key)))) => {
+                println!("Server received key: {}", key);
+                // レスポンスを送信
+                let response = Message::Response(format!("Received key: {}", key));
+                client.send(&response)?;
+                println!("Server sent response");
+            }
+            Ok(Some(Event::MessageReceived(Message::Response(_)))) => {
+                println!("Server received unexpected response");
+            }
+            Ok(Some(Event::MessageSent)) => {
+                println!("Server sent a message (handled)");
+            }
+            Ok(Some(Event::ConnectionAccepted(_))) => {
+                println!("Unexpected connection event in client handler");
+            }
+            Ok(None) => {
+                // イベントなし
+            }
+            Err(e) => {
+                eprintln!("Client handler error: {}", e);
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    client.stop()?;
     Ok(())
 }
 
 // クライアントモードを実行します。
 fn run_client() -> Result<(), Box<dyn Error>> {
-    let client = Client::connect("hash_pipe")?;
+    // サーバーが起動するのを待つ
+    thread::sleep(Duration::from_millis(100));
+
+    let mut client = Client::start("key_pipe")?;
     println!("Client connected to server");
 
-    // 標準入力からデータを読み込む
-    println!("Please enter text to send (end with Ctrl+D or Ctrl+Z):");
-    let mut buffer = Vec::new();
-    io::stdin().read_to_end(&mut buffer)?;
-    
-    // サーバーにデータを送信
-    let message = Message::Data(buffer);
-    client.send(&message)?;
-    println!("Client sent data to server.");
+    // 標準入力からキーを読み込む
+    println!("Enter key to send (end with Ctrl+D or Ctrl+Z):");
+    let mut buffer = String::new();
+    io::stdin().read_to_string(&mut buffer)?;
+    let key = buffer.trim().to_string();
 
-    // サーバーからのハッシュ値を受信して表示
-    let response: Message = client.recv()?;
-    if let Message::Hash(hash) = response {
-        println!("Client received hash from server:");
-        println!("{}", hash);
-    } else {
-        return Err("Unexpected message type received by client.".into());
+    // サーバーにキーを送信
+    let message = Message::Key(key.clone());
+    client.send(&message)?;
+    println!("Client sent key: {}", key);
+
+    // サーバーからのレスポンスを受信
+    loop {
+        match client.poll_event::<Message>() {
+            Ok(Some(Event::MessageReceived(Message::Response(response)))) => {
+                println!("Client received response: {}", response);
+                break;
+            }
+            Ok(Some(Event::MessageReceived(Message::Key(_)))) => {
+                println!("Client received unexpected key");
+            }
+            Ok(Some(Event::MessageSent)) => {
+                println!("Client sent a message (handled)");
+            }
+            Ok(Some(Event::ConnectionAccepted(_))) => {
+                println!("Unexpected connection event in client");
+            }
+            Ok(None) => {
+                // イベントなし
+            }
+            Err(e) => {
+                eprintln!("Client error: {}", e);
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
     }
 
+    client.stop()?;
+    println!("Client stopped");
     Ok(())
 }
