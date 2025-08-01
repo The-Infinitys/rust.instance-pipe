@@ -7,12 +7,14 @@ use interprocess::os::unix::local_socket::FilesystemUdSocket;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Result};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// サーバーに接続するためのクライアント構造体。
 #[derive(Clone)]
 pub struct Client {
     stream: Arc<LocalSocketStream>,
     event_handler: EventHandler,
+    timeout: Duration,
 }
 
 impl From<LocalSocketStream> for Client {
@@ -21,6 +23,7 @@ impl From<LocalSocketStream> for Client {
         Self {
             stream: Arc::new(value),
             event_handler: EventHandler::new(),
+            timeout: Duration::from_millis(50), // Default timeout of 50ms
         }
     }
 }
@@ -51,6 +54,7 @@ impl Client {
         Ok(Self {
             stream: Arc::new(stream),
             event_handler: EventHandler::new(),
+            timeout: Duration::from_millis(50), // Default timeout of 50ms
         })
     }
 
@@ -63,20 +67,31 @@ impl Client {
     /// サーバーからのイベントをポーリングします。
     ///
     /// 非ブロッキングでメッセージを受信し、イベントとして返します。
+    /// タイムアウト時間内にメッセージがなければNoneを返します。
     ///
     /// # エラー
     /// メッセージの受信またはデシリアライズに失敗した場合にエラーを返します。
     pub fn poll_event<T: for<'a> Deserialize<'a>>(&mut self) -> Result<Option<Event<T>>> {
         self.stream.set_nonblocking(true)?;
-        match protocol::recv_message(&mut &*self.stream) {
-            Ok(message) => Ok(Some(Event::MessageReceived(message))),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                self.stream.set_nonblocking(false)?;
-                Ok(None)
-            }
-            Err(e) => {
-                self.stream.set_nonblocking(false)?;
-                Err(e)
+        let start = std::time::Instant::now();
+        loop {
+            match protocol::recv_message(&mut &*self.stream) {
+                Ok(message) => {
+                    self.stream.set_nonblocking(false)?;
+                    return Ok(Some(Event::MessageReceived(message)));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if start.elapsed() >= self.timeout {
+                        self.stream.set_nonblocking(false)?;
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => {
+                    self.stream.set_nonblocking(false)?;
+                    return Err(e);
+                }
             }
         }
     }
@@ -105,6 +120,19 @@ impl Client {
         self.event_handler
             .notify(Event::MessageReceived(message.clone()));
         Ok(message)
+    }
+
+    /// 現在のタイムアウト時間を取得します。
+    pub fn get_timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// タイムアウト時間を設定します。
+    ///
+    /// # 引数
+    /// - `timeout`: ポーリング時の新しいタイムアウト時間。
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
     }
 }
 

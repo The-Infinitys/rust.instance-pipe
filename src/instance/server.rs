@@ -5,11 +5,13 @@ use interprocess::local_socket::{ListenerOptions, ToNsName, prelude::LocalSocket
 use interprocess::os::unix::local_socket::FilesystemUdSocket;
 use std::io::Result;
 use crate::instance::event::{Event, EventHandler};
+use std::time::Duration;
 
 /// クライアントからの接続を待ち受けるサーバー構造体。
 pub struct Server {
     listener: LocalSocketListener,
     event_handler: EventHandler,
+    timeout: Duration,
 }
 
 impl Server {
@@ -36,6 +38,7 @@ impl Server {
         Ok(Self {
             listener,
             event_handler: EventHandler::new(),
+            timeout: Duration::from_millis(50), // Default timeout of 50ms
         })
     }
 
@@ -48,24 +51,33 @@ impl Server {
     /// クライアントからの接続イベントをポーリングします。
     ///
     /// 非ブロッキングで接続をチェックし、接続があればクライアントを返します。
+    /// タイムアウト時間内にイベントがなければNoneを返します。
     ///
     /// # エラー
     /// 接続の受け入れに失敗した場合にエラーを返します。
     pub fn poll_event(&mut self) -> Result<Option<Event<Client>>> {
         self.listener.set_nonblocking(ListenerNonblockingMode::Accept)?;
-        match self.listener.accept() {
-            Ok(stream) => {
-                let client: Client = stream.into();
-                self.event_handler.notify(Event::<Client>::ConnectionAccepted(client.clone()));
-                Ok(Some(Event::ConnectionAccepted(client)))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                self.listener.set_nonblocking(ListenerNonblockingMode::Neither)?;
-                Ok(None)
-            }
-            Err(e) => {
-                self.listener.set_nonblocking(ListenerNonblockingMode::Neither)?;
-                Err(e)
+        let start = std::time::Instant::now();
+        loop {
+            match self.listener.accept() {
+                Ok(stream) => {
+                    let client: Client = stream.into();
+                    self.event_handler.notify(Event::<Client>::ConnectionAccepted(client.clone()));
+                    self.listener.set_nonblocking(ListenerNonblockingMode::Neither)?;
+                    return Ok(Some(Event::ConnectionAccepted(client)));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if start.elapsed() >= self.timeout {
+                        self.listener.set_nonblocking(ListenerNonblockingMode::Neither)?;
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => {
+                    self.listener.set_nonblocking(ListenerNonblockingMode::Neither)?;
+                    return Err(e);
+                }
             }
         }
     }
@@ -79,6 +91,19 @@ impl Server {
         let client: Client = stream.into();
         self.event_handler.notify(Event::<Client>::ConnectionAccepted(client.clone()));
         Ok(client)
+    }
+
+    /// 現在のタイムアウト時間を取得します。
+    pub fn get_timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// タイムアウト時間を設定します。
+    ///
+    /// # 引数
+    /// - `timeout`: ポーリング時の新しいタイムアウト時間。
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
     }
 }
 
