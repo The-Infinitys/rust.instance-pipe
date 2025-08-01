@@ -1,24 +1,17 @@
-
 use instance_pipe::{Client, Server};
 use std::error::Error;
 use std::env;
+use std::io::{self, Read};
+use sha2::{Sha256, Digest};
 
-/// テスト用のメッセージ構造体。
+// サーバーとクライアント間で送受信するメッセージ構造体。
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
-struct TestMessage {
-    id: u32,
-    content: String,
+enum Message {
+    Data(Vec<u8>),
+    Hash(String),
 }
 
-/// プログラムのエントリーポイント。
-///
-/// コマンドライン引数に基づいてサーバーまたはクライアントを実行します。
-/// 使用方法: `[実行ファイル] [server|client]`
-///
-/// # エラー
-/// 引数が無効な場合や、サーバー/クライアントの実行中にエラーが発生した場合にエラーを返します。
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse command-line arguments
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} [server|client]", args[0]);
@@ -35,57 +28,59 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-/// サーバーモードを実行します。
-///
-/// 名前付きパイプを作成し、クライアントからの接続を待機します。
-/// 接続後、メッセージを受信し、応答を送信します。
-///
-/// # エラー
-/// パイプの作成、接続の受け入れ、メッセージの送受信でエラーが発生した場合にエラーを返します。
+// サーバーモードを実行します。
 fn run_server() -> Result<(), Box<dyn Error>> {
-    let mut server = Server::new("test_pipe")?;
+    let mut server = Server::new("hash_pipe")?;
     println!("Server started, waiting for connections...");
 
-    // Accept a client connection
     let client = server.accept()?;
     println!("Client connected");
 
-    // Receive a message from the client
-    let received: TestMessage = client.recv()?;
-    println!("Server received: {:?}", received);
+    // クライアントからデータを受信
+    let received_msg: Message = client.recv()?;
+    if let Message::Data(data) = received_msg {
+        println!("Server received data ({} bytes).", data.len());
 
-    // Send a response back
-    let response = TestMessage {
-        id: received.id + 1,
-        content: format!("Server response to: {}", received.content),
-    };
-    client.send(&response)?;
-    println!("Server sent: {:?}", response);
+        // データのハッシュ値を計算
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let hash = format!("{:x}", hasher.finalize());
+        println!("Calculated hash: {}", hash);
+
+        // ハッシュ値をクライアントに送信
+        let response = Message::Hash(hash);
+        client.send(&response)?;
+        println!("Server sent hash.");
+    } else {
+        return Err("Unexpected message type received by server.".into());
+    }
 
     Ok(())
 }
 
-/// クライアントモードを実行します。
-///
-/// 指定された名前付きパイプに接続し、メッセージを送信して応答を受信します。
-///
-/// # エラー
-/// サーバーへの接続、メッセージの送受信でエラーが発生した場合にエラーを返します。
+// クライアントモードを実行します。
 fn run_client() -> Result<(), Box<dyn Error>> {
-    let client = Client::connect("test_pipe")?;
+    let client = Client::connect("hash_pipe")?;
     println!("Client connected to server");
 
-    // Send a message to the server
-    let message = TestMessage {
-        id: 1,
-        content: String::from("Hello from client!"),
-    };
+    // 標準入力からデータを読み込む
+    println!("Please enter text to send (end with Ctrl+D or Ctrl+Z):");
+    let mut buffer = Vec::new();
+    io::stdin().read_to_end(&mut buffer)?;
+    
+    // サーバーにデータを送信
+    let message = Message::Data(buffer);
     client.send(&message)?;
-    println!("Client sent: {:?}", message);
+    println!("Client sent data to server.");
 
-    // Receive response from server
-    let response: TestMessage = client.recv()?;
-    println!("Client received: {:?}", response);
+    // サーバーからのハッシュ値を受信して表示
+    let response: Message = client.recv()?;
+    if let Message::Hash(hash) = response {
+        println!("Client received hash from server:");
+        println!("{}", hash);
+    } else {
+        return Err("Unexpected message type received by client.".into());
+    }
 
     Ok(())
 }
