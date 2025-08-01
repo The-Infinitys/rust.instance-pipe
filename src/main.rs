@@ -1,13 +1,22 @@
+
 use instance_pipe::{Client, Server};
 use std::error::Error;
 use std::env;
 
+/// テスト用のメッセージ構造体。
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 struct TestMessage {
     id: u32,
     content: String,
 }
 
+/// プログラムのエントリーポイント。
+///
+/// コマンドライン引数に基づいてサーバーまたはクライアントを実行します。
+/// 使用方法: `[実行ファイル] [server|client]`
+///
+/// # エラー
+/// 引数が無効な場合や、サーバー/クライアントの実行中にエラーが発生した場合にエラーを返します。
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse command-line arguments
     let args: Vec<String> = env::args().collect();
@@ -26,6 +35,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+/// サーバーモードを実行します。
+///
+/// 名前付きパイプを作成し、クライアントからの接続を待機します。
+/// 接続後、メッセージを受信し、応答を送信します。
+///
+/// # エラー
+/// パイプの作成、接続の受け入れ、メッセージの送受信でエラーが発生した場合にエラーを返します。
 fn run_server() -> Result<(), Box<dyn Error>> {
     let mut server = Server::new("test_pipe")?;
     println!("Server started, waiting for connections...");
@@ -49,6 +65,12 @@ fn run_server() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// クライアントモードを実行します。
+///
+/// 指定された名前付きパイプに接続し、メッセージを送信して応答を受信します。
+///
+/// # エラー
+/// サーバーへの接続、メッセージの送受信でエラーが発生した場合にエラーを返します。
 fn run_client() -> Result<(), Box<dyn Error>> {
     let client = Client::connect("test_pipe")?;
     println!("Client connected to server");

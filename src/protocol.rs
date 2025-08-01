@@ -1,7 +1,10 @@
+
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{self, Read, Write};
 
 /// メッセージをシリアライズして指定されたライターに送信します。
+///
+/// メッセージをbincode形式でエンコードし、長さプレフィックス付きで送信します。
 ///
 /// # 引数
 /// - `writer`: メッセージの書き込み先となる`Write`トレイトを実装するオブジェクト。
@@ -25,6 +28,8 @@ pub fn send_message<T: Serialize, W: Write>(writer: &mut W, message: &T) -> io::
 }
 
 /// 指定されたリーダーからメッセージを受信し、デシリアライズします。
+///
+/// 長さプレフィックスを読み取り、bincode形式でデコードします。
 ///
 /// # 引数
 /// - `reader`: メッセージの読み込み元となる`Read`トレイトを実装するオブジェクト。

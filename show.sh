@@ -21,7 +21,7 @@ echo ""
 find "$directory" -type f -name "*.$extension" | while read -r file; do
     echo "## $file"
     echo ""
-    echo "\`\`\`"
+    echo "\`\`\`$extension"
     cat $file
     echo ""
     echo "\`\`\`"
