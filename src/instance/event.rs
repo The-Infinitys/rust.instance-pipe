@@ -12,6 +12,12 @@ pub struct EventHandler {
     events: Arc<Mutex<Vec<String>>>,
 }
 
+impl Default for EventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventHandler {
     pub fn new() -> Self {
         Self {

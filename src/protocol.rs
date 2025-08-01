@@ -15,7 +15,7 @@ use std::io::{self, Read, Write};
 pub fn send_message<T: Serialize, W: Write>(writer: &mut W, message: &T) -> io::Result<()> {
     // bincode v2 を使ってメッセージをバイナリにシリアライズ
     let encoded = bincode::serde::encode_to_vec(message, bincode::config::standard())
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
 
     // メッセージの長さをリトルエンディアンで4バイトのプレフィックスとして書き込む
     let len = encoded.len() as u32;
@@ -46,7 +46,7 @@ pub fn recv_message<T: DeserializeOwned, R: Read>(reader: &mut R) -> io::Result<
 
     // bincode v2 を使ってバイナリをメッセージにデシリアライズ
     let (message, _) = bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
     
     Ok(message)
 }
