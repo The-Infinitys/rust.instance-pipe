@@ -33,17 +33,8 @@ name = "instance-pipe"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "instance-pipe-derive",
  "interprocess",
  "serde",
-]
-
-[[package]]
-name = "instance-pipe-derive"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn",
 ]
 
 [[package]]

@@ -8,6 +8,3 @@ pub mod protocol;
 
 pub use instance::client::Client;
 pub use instance::server::Server;
-
-// カスタムderiveマクロを再エクスポート
-pub use instance_pipe_derive::*;
